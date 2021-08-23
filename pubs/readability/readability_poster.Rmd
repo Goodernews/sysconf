@@ -1,0 +1,180 @@
+---
+title: Readability of Computer Systems Papers
+author:
+  - name: Eitan Frachtenberg
+    affil: 1
+  - name: Taylor Blair
+    affil: 2
+affiliation:
+  - num: 1
+    address: Visiting Professor of Computer Science, Reed College
+  - num: 2
+    address: Computer Science Student, Reed College
+column_numbers: 3
+logoright_name: griffin.png 
+output: 
+  posterdown::posterdown_html:
+    self_contained: false
+knit: pagedown::chrome_print
+bibliography: "bibliography.bib"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+```{r code = readLines("../load_data.R"), echo=F, message=F}
+```
+
+
+```{css}
+
+
+div.title_container{
+   background-color: #A70E16;
+}
+
+div.logo_left{
+  background-color: #A70E16;
+}
+
+div.logo_right{
+  background-color: #A70E16;
+}
+
+div.poster_body h1{
+  background-color: #A70E16;
+  border: #A70E16;
+}
+
+
+```
+
+```{r}
+library(tidyverse) # ggplot2, and dplyr
+library(scales) # For percent labeling
+library(kableExtra) # Table formatting
+library(knitr)
+
+
+df <- read_csv("readability.csv") %>%
+  inner_join(papers %>%
+               mutate(key=paste(key, ".txt", sep="")) %>%
+               rename(document=key)) %>%
+  mutate(conference=paste(confrence, "_17", sep = "")) %>%
+  left_join(sys_confs %>%
+              select(conference, subfield)) #%>%
+  #mutate(subfield = fct_explicit_na(subfield, "Not Provided"))
+
+df$ratio_flesch <- df$Flesch.Kincaid/df$abstract.Flesch.Kincaid
+df$ratio_SMOG <- df$SMOG/df$abstract.SMOG
+
+readability_metrics <- c("abstract.Flesch.Kincaid", "abstract.SMOG", "Flesch.Kincaid", "SMOG") 
+
+  
+```
+
+
+# Introduction
+
+Readability metrics are simple formulas in linguistics that return a number representing the difficulty level of a given piece of text. This number is an indicator of a reader's willingness to continue to engage with a given text [@dubay2004principles]. Readability is crucial because in order for a piece to be understood by a majority of adults in the United States, it needs to be written at the sixth grade level [@kirsch1993adult]. Readability is integral to academic papers because an unreadable paper is more likely to be put down or ignored in spite of the high academic level of the reader. 
+
+# Objectives
+
+ *  Observe the readability gap between abstracts and fulltext.
+ * Remark on readability trends in subfields of computer system papers.
+ * Discuss the practicality of utilizing readability metrics to analyze computer system papers.
+
+
+# Methods
+
+We have data from the previous summer on `r length(unique(drop_na(df, subfield)$document))` papers across `r length(unique(drop_na(df, subfield)$conference))` conferences. Over the course of this summer we converted PDFs of papers to TXT files and then hand cleaned the documents by removing artifacts, marking abstracts and placing the references on separate documents. 
+
+We initially did a finer, more methodical method of cleaning, but due to the time constraints we switched to a less rigorous hand cleaning method and relied instead on computerized cleaning. 
+
+
+We then applied two readability formulas to our cleaned text files:
+
++ **SMOG** (Simple Measure of Gobbledygook)
+    + $\text{Grade Level} = 1.0430 \sqrt{\text{Polysyllables}\times \frac{30}{\text{Sentences}}}$
+    + A polysyllable is a word with three or more syllables.
+    + This is a measure of the number of words with more than three syllables in a sentence.
++ **Flesch–Kincaid**
+    + $\textrm{Grade Level} = 206.835 - 1.015 \left( \frac{\text{Words}}{\text{Sentences}} \right) - 84.6 \left( \frac{\text{Syllables}}{\text{Words}} \right)$
+    + Flesch–Kincaid compares the average number of words in a sentence to the average number of syllables in a word.
+
+
+These formulas output a grade level (where lower is better) which allows us to compare texts.
+
+# Results
+
+Previous summer research on computer systems scraped information about conference and paper topics. Using the data created this summer we merged these datasets to correlate between readability and topics.
+
+```{r boxplot, out.width='100%', fig.height=11.5}
+
+
+conf_medians <- df %>% # dummy table for sorting boxplots by medians
+  drop_na(subfield) %>%
+  group_by(confrence) %>%
+  summarise(med = median(Flesch.Kincaid)) %>%
+  arrange(med)
+
+
+df %>% # boxplot graph
+  drop_na(subfield) %>% # removes conferences with no subfield topic
+  rename(Subfield=subfield) %>%
+  ggplot(aes(reorder(confrence, Flesch.Kincaid, median), Flesch.Kincaid, fill = Subfield)) +
+  geom_boxplot() + 
+  coord_flip() + # Puts text on y-axis for readability
+  scale_fill_manual(labels = function(x) str_wrap(x, width = 5), values=c("#E6BEFF", "#800000", "#FFFAC8", "#000080", "#0082C8", "#E6194B", "#F032E6", "#AAFFC3", "#3CB44B", "#008080", "#D2F53C", "#F58231", "#AA6E28", "#911EB4", "#FFe119"))+
+  labs(title = "Readability by Conference", x="Conference", y="Fulltext Grade Level")
+```
+
+The three most readable conferences, `r combine_words(head(conf_medians$confrence, 3))` were all hand-cleaned, removing all non-textual artifacts. The most readable papers ranked first due to the inline math. Inline math throws off readability metrics because the formula mistakes variables (i.e. $x,y,z, \theta$) for one syllable words. 
+
+The three least readable conferences, `r combine_words(tail(conf_medians, 3)$confrence)` were cleaned using regex, with the exception of SLE, which was hand cleaned. These conferences papers often contained chunks of code (ex: `object Code extends StandardTokenParsers`) which skews the reading metric downward. This is because the readability formulas see the chunks as single sentences containing multiple polysyllables. 
+
+```{r}
+
+# Output
+grade_dif_full_v_abstract <- df[, readability_metrics] %>% # Grade difference between abstract and fulltext
+  as_tibble() %>%
+  pivot_longer(all_of(readability_metrics), names_to="Readability Metric") %>% # pivot out metrics
+  mutate(section = ifelse(grepl("abstract", `Readability Metric`, fixed=T), "Abstract", "Fulltext"), # returns the text section
+         `Readability Metric` = str_replace(`Readability Metric`, "abstract.", "")) %>% # remove "abstract." from metric name
+  drop_na() %>%
+  group_by(`Readability Metric`, section) %>%
+  summarise(`Mean Grade` = mean(value)) %>%
+  group_by(`Readability Metric`) %>%
+  summarise(`Difference` = abs(diff(`Mean Grade`)))
+
+#######################################################
+
+df %>% # Outputs a table
+  select(abstract.Flesch.Kincaid, Flesch.Kincaid, document) %>%
+  drop_na(abstract.Flesch.Kincaid) %>%
+  inner_join(topics %>%
+               rename(`Paper Topic` = topic) %>%
+               mutate(document = paste(key, ".txt", sep=""))) %>%
+  group_by(`Paper Topic`) %>%
+  summarise(Abstract = round(mean(abstract.Flesch.Kincaid), 3),
+            Fulltext = round(mean(Flesch.Kincaid), 3)) %>%
+  arrange(Fulltext) %>%
+  kbl(booktabs = T, caption = "Paper Subfield Readability") %>%
+  add_header_above(c(" " = 1, "Mean Readability Metric" = 2))
+
+```
+
+On average, the abstract is `r round(mean(grade_dif_full_v_abstract$Difference), 2)` grades above the fulltext. Previous research indicated the same trend of abstracts being less readable compared to the fulltexts [@plaven2017readability]. One explanation is that when writing abstracts, authors are forced to write in a condensed space and use prose to compensate.
+
+The most readable subfield by fulltext Flesch–Kincaid are database papers. The reason that database papers are given a highly readable grade is because the most common type of artifact was inline math. 
+
+In contrast, the least readable group, Benchmarks, contains large amounts of assembly code, functions and graphs containing text. These papers would have benefited from more hand cleaning. 
+
+# Conclusion
+
+While readability metrics have been useful in analyzing other fields, especially medical ones [@elhadad2006comprehending], computer systems papers present a unique challenge with their embedded code, graphs and math equations. Through extensive data prep we are able to replicate findings about abstracts and fulltexts as well as some general trends about readability of papers by topic. The fact that the math-heavy and code-based occupy both extremes for readability demonstrates the need for a more labor-intensive hand cleaning. 
+
+
+# References
